@@ -5,6 +5,11 @@ import database
 import jwt
 import os
 from datetime import datetime, timedelta
+from functools import wraps
+from flask import request, abort
+from flask import current_app
+import json
+
 
 class Server:
     def __init__(self, port: int = 8989):
@@ -15,20 +20,66 @@ class Server:
         self.__server.run(port=self.__port)
 
     def add_routes(self):
-        self.__server.add_url_rule('/shoes', '/shoes', self.get_shoes, methods=['GET'])
-        self.__server.add_url_rule('/create_shoes', '/create_shoes', self.create_shoes, methods=['POST'])
-        self.__server.add_url_rule('/remove_shoe', '/remove_shoe', self.remove_shoe, methods=['DELETE'])
-        self.__server.add_url_rule('/update_shoe', '/update_shoe', self.update_shoe, methods=['PATCH'])
-        self.__server.add_url_rule('/user_signup', 'user_signup', self.user_signup, methods=['POST'])
-        self.__server.add_url_rule('/user_login', 'user_login', self.user_login,methods=['GET'])
+        self.__server.add_url_rule('/shoes', '/shoes', self.token_required(self.get_shoes), methods=['GET'])
+        self.__server.add_url_rule('/create_shoes', '/create_shoes', self.token_required(self.create_shoes), methods=['POST'])
+        self.__server.add_url_rule('/remove_shoe', '/remove_shoe', self.token_required(self.remove_shoe), methods=['DELETE'])
+        self.__server.add_url_rule('/update_shoe', '/update_shoe', self.token_required(self.update_shoe), methods=['PATCH'])
+        self.__server.add_url_rule('/user_signup', '/user_signup', self.user_signup, methods=['POST'])
+        self.__server.add_url_rule('/user_login', '/user_login', self.user_login,methods=['POST'])
 
     # @staticmethod
     # def __get_db_connection():
     #     conn = sqlite3.connect('shoes.db')
     #     conn.row_factory = sqlite3.Row
     #     return conn
+    secret_key = "random_string"
+    def token_required(self,f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            token = None
+            if "Authorization" in request.headers:
+                token = request.headers["Authorization"]
+                print(token)
+            if not token:
+                return {
+                    "message": "Authentication Token is missing!",
+                    "data": None,
+                    "error": "Unauthorized"
+                }, 401
+            try:
+                data=jwt.decode(token, self.secret_key, algorithms=["HS256"])
+                # JSON string
+                json_string = '{"data": {"user_id": 1}, "exp": 1734884835}'
+
+                # Parse the string into a dictionary
+                parsed_json = json.loads(json_string)
+
+                # Access the value of 'user_id'
+                user_id = parsed_json['data']['user_id']
+                print(user_id)
+                query = ''' SELECT * from user_info where user_id = ? '''
+                params = (user_id,)
+                current_user=database.fetch_data(query,(user_id,))
+                if current_user is None:
+                    return {
+                    "message": "Invalid Authentication token!",
+                    "data": None,
+                    "error": "Unauthorized"
+                }, 401
+                
+            except Exception as e:
+                return {
+                    "message": "Something went wrong",
+                    "data": None,
+                    "error": str(e)
+                }, 500
+
+            return f(current_user, *args, **kwargs)
+
+        return decorated
     
-    def get_shoes(self):
+    
+    def get_shoes(self,current_user):
         try:
             shoe_id = request.args.get('shoe_id')
             shoe_name = request.args.get('shoe_name')
@@ -37,7 +88,7 @@ class Server:
                 params = (shoe_id,shoe_name,)
             elif shoe_id:
                 query = ''' SELECT * from shoes where shoes_id = ? '''
-                params = (shoe_id)
+                params = (shoe_id,)
             elif shoe_name:
                 query = ''' SELECT * from shoes where shoe_name = ?'''
                 params = (shoe_name,)
@@ -123,7 +174,7 @@ class Server:
         try:
             print(content)
             # Define secret and algorithm
-            secret_key = "random_string"  # Use an environment variable
+              # Use an environment variable
             algorithm = "HS256"
             
             # Add expiration time
@@ -134,7 +185,7 @@ class Server:
             
             # Encode JWT token
             #print(payload,secret_key,algorithm)
-            encoded_content = jwt.encode(payload, secret_key, algorithm=algorithm)
+            encoded_content = jwt.encode(payload, self.secret_key, algorithm=algorithm)
             #print(encoded_content)
             return encoded_content  # Returns a token in string format
         except Exception as e:
@@ -147,7 +198,7 @@ class Server:
         else: 
             return False
         
-    from werkzeug.security import check_password_hash
+    # from werkzeug.security import check_password_hash
 
     def validate_user(self, password, query, params):
         try:
@@ -167,7 +218,7 @@ class Server:
                     # Generate JWT token
                     jwt_token = self.generate_jwt_token({"user_id": user_id})
                     if jwt_token:
-                        print(f"Generated JWT Token: {jwt_token}")
+                        # print(f"Generated JWT Token: {jwt_token}")
                         return jwt_token
                     else:
                         return {"message": "Failed to generate token"}, 500
@@ -183,6 +234,7 @@ class Server:
         conn = sqlite3.connect('shoes.db')
         conn.row_factory = sqlite3.Row
         return conn
+    
     def user_signup(self):
         conn = None  # Ensure conn is defined for cleanup
         try:
@@ -243,7 +295,7 @@ class Server:
     def user_login(self):
         try:
             data = request.get_json()
-            if data['email'] is None or data['password'] is None:
+            if data.get('email') is None or data.get('password') is None:
                 return jsonify({"message":"email or password is required"})
             email = data['email']
             password = data['password']

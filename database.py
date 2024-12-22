@@ -30,10 +30,9 @@ def create_database():
 
     cursor.execute(''' 
         CREATE TABLE IF NOT EXISTS user_info(
-            user_id INT,
-            email TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            name TEXT NOT NULL
+            user_id INTEGER,
+            email TEXT PRIMARY KEY NOT NULL,
+            password TEXT NOT NULL
         )
     ''')
 
