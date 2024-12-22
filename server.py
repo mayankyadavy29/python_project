@@ -102,7 +102,7 @@ class Server:
 
         return database.fetch_data(query,params)
     
-    def create_shoes(self):
+    def create_shoes(self,current_user):
         
         #     cursor.execute('''
         #     CREATE TABLE IF NOT EXISTS shoes (
@@ -125,7 +125,7 @@ class Server:
         return database.insert_data(data)
 
 
-    def remove_shoe(self):
+    def remove_shoe(self,current_user):
         try:
             shoe_id = request.args.get('shoe_id')
             shoe_name = request.args.get('shoe_name')
@@ -143,7 +143,7 @@ class Server:
         return database.remove_data(query,params)
 
     
-    def update_shoe(self):
+    def update_shoe(self,current_user):
         try:
             shoe_id = request.args.get('shoe_id')
             shoe_name = request.args.get('shoe_name')
