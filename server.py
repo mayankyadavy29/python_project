@@ -2,6 +2,14 @@ from pkgutil import get_data
 from flask import Flask, jsonify, request
 import sqlite3
 import database
+import jwt
+import os
+from datetime import datetime, timedelta
+from functools import wraps
+from flask import request, abort
+from flask import current_app
+import json
+
 
 class Server:
     def __init__(self, port: int = 8989):
@@ -12,18 +20,66 @@ class Server:
         self.__server.run(port=self.__port)
 
     def add_routes(self):
-        self.__server.add_url_rule('/shoes', '/shoes', self.get_shoes, methods=['GET'])
-        self.__server.add_url_rule('/create_shoes', '/create_shoes', self.create_shoes, methods=['POST'])
-        self.__server.add_url_rule('/remove_shoe', '/remove_shoe', self.remove_shoe, methods=['DELETE'])
-        self.__server.add_url_rule('/update_shoe', '/update_shoe', self.update_shoe, methods=['PATCH'])
+        self.__server.add_url_rule('/shoes', '/shoes', self.token_required(self.get_shoes), methods=['GET'])
+        self.__server.add_url_rule('/create_shoes', '/create_shoes', self.token_required(self.create_shoes), methods=['POST'])
+        self.__server.add_url_rule('/remove_shoe', '/remove_shoe', self.token_required(self.remove_shoe), methods=['DELETE'])
+        self.__server.add_url_rule('/update_shoe', '/update_shoe', self.token_required(self.update_shoe), methods=['PATCH'])
+        self.__server.add_url_rule('/user_signup', '/user_signup', self.user_signup, methods=['POST'])
+        self.__server.add_url_rule('/user_login', '/user_login', self.user_login,methods=['POST'])
 
     # @staticmethod
     # def __get_db_connection():
     #     conn = sqlite3.connect('shoes.db')
     #     conn.row_factory = sqlite3.Row
     #     return conn
+    secret_key = "random_string"
+    def token_required(self,f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            token = None
+            if "Authorization" in request.headers:
+                token = request.headers["Authorization"]
+                print(token)
+            if not token:
+                return {
+                    "message": "Authentication Token is missing!",
+                    "data": None,
+                    "error": "Unauthorized"
+                }, 401
+            try:
+                data=jwt.decode(token, self.secret_key, algorithms=["HS256"])
+                # JSON string
+                json_string = '{"data": {"user_id": 1}, "exp": 1734884835}'
+
+                # Parse the string into a dictionary
+                parsed_json = json.loads(json_string)
+
+                # Access the value of 'user_id'
+                user_id = parsed_json['data']['user_id']
+                print(user_id)
+                query = ''' SELECT * from user_info where user_id = ? '''
+                params = (user_id,)
+                current_user=database.fetch_data(query,(user_id,))
+                if current_user is None:
+                    return {
+                    "message": "Invalid Authentication token!",
+                    "data": None,
+                    "error": "Unauthorized"
+                }, 401
+                
+            except Exception as e:
+                return {
+                    "message": "Something went wrong",
+                    "data": None,
+                    "error": str(e)
+                }, 500
+
+            return f(current_user, *args, **kwargs)
+
+        return decorated
     
-    def get_shoes(self):
+    
+    def get_shoes(self,current_user):
         try:
             shoe_id = request.args.get('shoe_id')
             shoe_name = request.args.get('shoe_name')
@@ -32,7 +88,7 @@ class Server:
                 params = (shoe_id,shoe_name,)
             elif shoe_id:
                 query = ''' SELECT * from shoes where shoes_id = ? '''
-                params = (shoe_id)
+                params = (shoe_id,)
             elif shoe_name:
                 query = ''' SELECT * from shoes where shoe_name = ?'''
                 params = (shoe_name,)
@@ -46,7 +102,7 @@ class Server:
 
         return database.fetch_data(query,params)
     
-    def create_shoes(self):
+    def create_shoes(self,current_user):
         
         #     cursor.execute('''
         #     CREATE TABLE IF NOT EXISTS shoes (
@@ -69,7 +125,7 @@ class Server:
         return database.insert_data(data)
 
 
-    def remove_shoe(self):
+    def remove_shoe(self,current_user):
         try:
             shoe_id = request.args.get('shoe_id')
             shoe_name = request.args.get('shoe_name')
@@ -86,8 +142,8 @@ class Server:
             return e
         return database.remove_data(query,params)
 
-
-    def update_shoe(shelf):
+    
+    def update_shoe(self,current_user):
         try:
             shoe_id = request.args.get('shoe_id')
             shoe_name = request.args.get('shoe_name')
@@ -113,6 +169,154 @@ class Server:
         except sqlite3.Error as e:
             return e
         return database.update_shoe(query,params)
+    
+    def generate_jwt_token(self,content):
+        try:
+            print(content)
+            # Define secret and algorithm
+              # Use an environment variable
+            algorithm = "HS256"
+            
+            # Add expiration time
+            payload = {
+                "data": content,
+                "exp": datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
+            }
+            
+            # Encode JWT token
+            #print(payload,secret_key,algorithm)
+            encoded_content = jwt.encode(payload, self.secret_key, algorithm=algorithm)
+            #print(encoded_content)
+            return encoded_content  # Returns a token in string format
+        except Exception as e:
+            print(f"Error generating JWT token: {e}")
+            return None
+
+    def validate_user_input(self,email,password):
+        if len(email)<=255 and len(password)<=255:
+            return True
+        else: 
+            return False
+        
+    # from werkzeug.security import check_password_hash
+
+    def validate_user(self, password, query, params):
+        try:
+            # Fetch user data from the database
+            current_user = database.fetch_data(query, params)
+            print(f"Current user: {current_user}")
+            
+            if current_user:
+                saved_password_hash = current_user[0]['password']  # Assume hashed password
+                print(f"Provided password: {password}, Saved hash: {saved_password_hash}")
+                
+                # Verify hashed password
+                if saved_password_hash == password:
+                    user_id = current_user[0]['user_id']
+                    print(f"Validated user ID: {user_id}")
+                    
+                    # Generate JWT token
+                    jwt_token = self.generate_jwt_token({"user_id": user_id})
+                    if jwt_token:
+                        # print(f"Generated JWT Token: {jwt_token}")
+                        return jwt_token
+                    else:
+                        return {"message": "Failed to generate token"}, 500
+                else:
+                    return {"message": "Invalid password"}, 401
+            else:
+                return {"message": "User not found"}, 404
+        except Exception as e:
+            print(f"Error during user validation: {e}")
+            return {"message": "Internal server error"}, 500
+
+    def __get_db_connection(self):
+        conn = sqlite3.connect('shoes.db')
+        conn.row_factory = sqlite3.Row
+        return conn
+    
+    def user_signup(self):
+        conn = None  # Ensure conn is defined for cleanup
+        try:
+            # Parse JSON data
+            data = request.get_json()
+            
+            # Validate required fields
+            if not data.get('email') or not data.get('password'):
+                return jsonify({"message": "Complete all fields"}), 400
+            
+            email = data['email']
+            password = data['password']
+            
+            # Validate input length
+            if not self.validate_user_input(email, password):
+                return jsonify({"message": "Reduce password or email length to 255 characters only"}), 400
+            
+            # Database connection
+            conn = self.__get_db_connection()
+            cursor = conn.cursor()
+            
+            # Check if user already exists
+            cursor.execute("SELECT 1 FROM user_info WHERE email = ?", (email,))
+            result = cursor.fetchone()
+            if result:
+                return jsonify({"message": "User already exists"}), 409  # HTTP 409 for conflict
+            
+            # Insert user into database
+            query = "INSERT INTO user_info ({columns}) VALUES ({placeholders})".format(
+                columns=", ".join(data.keys()),
+                placeholders=", ".join(["?"] * len(data))
+            )
+            cursor.execute(query, list(data.values()))
+            conn.commit()
+            #cursor.execute("SELECT * FROM user_info")
+            #rows = cursor.fetchall()
+            #columns = [description[0] for description in cursor.description]
+            # columns = 0
+            #print(columns)
+            #data = [dict(zip(columns, row)) for row in rows]
+            #print(data)
+            
+            return jsonify({"message": "User registered successfully"}), 201  # HTTP 201 for created
+        
+        except sqlite3.Error as e:
+            return jsonify({"message": "Database error", "error": str(e)}), 500
+        
+        finally:
+            if conn:
+                conn.close()
+
+        
+        # cursor.execute("SELECT * FROM user_info where email = ?",(email,))
+        # res = cursor.fetchall
+        # print(res)
+        
+        
+    def user_login(self):
+        try:
+            data = request.get_json()
+            if data.get('email') is None or data.get('password') is None:
+                return jsonify({"message":"email or password is required"})
+            email = data['email']
+            password = data['password']
+
+            conn = self.__get_db_connection()
+            cursor = conn.cursor()
+            query = '''SELECT * FROM user_info WHERE email = ?'''
+            params = (email,)
+            user_token = self.validate_user(password,query,params)
+            print(user_token)
+            if user_token:
+                return jsonify({"jwt_token":user_token})
+            else:
+                return jsonify({"message":"credentials did not match"})
+        except sqlite3.Error as e:
+            return e
+        finally:
+            conn.close()
+            return jsonify({"message":"user login successfully"})
+
+            
 
 
     

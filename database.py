@@ -28,6 +28,15 @@ def create_database():
         )
     ''')
 
+    cursor.execute(''' 
+        CREATE TABLE IF NOT EXISTS user_info(
+            user_id INTEGER,
+            email TEXT PRIMARY KEY NOT NULL,
+            password TEXT NOT NULL
+        )
+    ''')
+
+
     conn.commit()
 
     #close the connection
@@ -53,8 +62,8 @@ def fetch_data(query, params=None):
     #convert the rows to a list of dictionaries
     try:
         data = [dict(zip(columns, row)) for row in rows]
-       # print(data)
-        return jsonify(data)
+        #print(data)
+        return data
     except sqlite3.Error as e:
         print(e)
         return e
